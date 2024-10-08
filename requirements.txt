@@ -1,0 +1,6 @@
+black
+click
+isort
+pyrate-limiter
+requests
+tqdm
