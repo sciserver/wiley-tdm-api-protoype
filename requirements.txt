@@ -2,6 +2,7 @@ black
 click
 isort
 google-generativeai
+pypdf2
 pyrate-limiter
 requests
 tqdm
