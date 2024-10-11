@@ -1,6 +1,7 @@
 black
 click
 isort
+google-generativeai
 pyrate-limiter
 requests
 tqdm
