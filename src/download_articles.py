@@ -152,6 +152,20 @@ def main(
         with open(out_dir / "crossref_articles.json", "w") as f:
             json.dump(articles, f, indent=2)
 
+    columns = ["DOI", "title", "container-title", "volume", "issue", "published"]
+    with open(out_dir / f"articles_{journal_id}_{start_year}_{end_year}.tsv", "w") as f:
+        f.write("\t".join(columns) + "\n")
+        for article in articles["message"]["items"]:
+            if article.get("title", None):
+                f.write(f"{article['DOI']}\t")
+                for c in columns[1:3]:
+                    f.write(f"{article.get(c, [""])[0]}\t")
+                for c in columns[3:-1]:
+                    f.write(f"{article.get(c, "")}\t")
+                f.write(
+                    f"{"-".join(map(str, article['published']["date-parts"][0]))}\n"
+                )
+
     dois = [
         article["DOI"]
         for article in articles["message"]["items"]
