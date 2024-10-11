@@ -33,19 +33,37 @@ def process_pdf(model: genai.types.Model, file_path: Path, prompt: str) -> str:
 @click.option(
     "--articles_dir", type=click.Path(path_type=Path), default=Path("articles")
 )
+@click.option(
+    "--out_dir", type=click.Path(path_type=Path), default=Path("outputs")
+)
 @click.option("--prompt", default=DEFAULT_PROMPT)
 @click.option("--api_key", type=str, envvar="GEMINI_API_KEY")
-def main(model_name: str, articles_dir: Path, prompt: str, api_key: str) -> None:
+def main(
+    model_name: str,
+    articles_dir: Path,
+    out_dir: Path,
+    prompt: str,
+    api_key: str
+) -> None:
+    if not out_dir.exists():
+        out_dir.mkdir()
+
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(model_name=model_name)
-    aricle_metadata = pd.read_csv(
-        articles_dir / "articles_10808620_2023_2023.tsv", sep="\t"
+
+    articles = filter(
+        lambda fname: not (out_dir / f"{fname.stem}.txt").exists(),
+        list(articles_dir.iterdir())
     )
 
-    article_path = articles_dir / "10.1111_1540-6229.12423.pdf"
-    generated_text = process_pdf(model, article_path, prompt)
+    for article in articles:
+        output_loc = out_dir / f"{article.stem}.txt"
+        if not output_loc.exists():
+            generated_text = process_pdf(model, article, prompt)
+            with output_loc.open("w") as f:
+                f.write(generated_text)
 
-    print(generated_text)
+
 
 
 if __name__ == "__main__":
