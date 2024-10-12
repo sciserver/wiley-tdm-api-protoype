@@ -6,6 +6,8 @@ import click
 import google.generativeai as genai
 import pandas as pd
 import PyPDF2
+import ratelimitqueue
+from tqdm import tqdm
 
 DEFAULT_PROMPT = (
     "Create a table describing the datasets used in the above text with"
@@ -33,17 +35,11 @@ def process_pdf(model: genai.types.Model, file_path: Path, prompt: str) -> str:
 @click.option(
     "--articles_dir", type=click.Path(path_type=Path), default=Path("articles")
 )
-@click.option(
-    "--out_dir", type=click.Path(path_type=Path), default=Path("outputs")
-)
+@click.option("--out_dir", type=click.Path(path_type=Path), default=Path("outputs"))
 @click.option("--prompt", default=DEFAULT_PROMPT)
 @click.option("--api_key", type=str, envvar="GEMINI_API_KEY")
 def main(
-    model_name: str,
-    articles_dir: Path,
-    out_dir: Path,
-    prompt: str,
-    api_key: str
+    model_name: str, articles_dir: Path, out_dir: Path, prompt: str, api_key: str
 ) -> None:
     if not out_dir.exists():
         out_dir.mkdir()
@@ -52,18 +48,29 @@ def main(
     model = genai.GenerativeModel(model_name=model_name)
 
     articles = filter(
-        lambda fname: not (out_dir / f"{fname.stem}.txt").exists(),
-        list(articles_dir.iterdir())
+        lambda fname: not (out_dir / f"{fname.stem}.txt").exists()
+        and fname.suffix == ".pdf",
+        list(articles_dir.iterdir()),
     )
 
+    article_queue = ratelimitqueue.RateLimitQueue(calls=10, per=60)
     for article in articles:
+        article_queue.put(article)
+
+    pbar = tqdm(total=article_queue.qsize())
+    while not article_queue.empty():
+        article = article_queue.get()
         output_loc = out_dir / f"{article.stem}.txt"
-        if not output_loc.exists():
+        try:
             generated_text = process_pdf(model, article, prompt)
-            with output_loc.open("w") as f:
-                f.write(generated_text)
+        except Exception as e:
+            print(f"Error processing {article}: {e}")
+            pbar.update()
+            continue
 
-
+        with output_loc.open("w") as f:
+            f.write(generated_text)
+        pbar.update()
 
 
 if __name__ == "__main__":

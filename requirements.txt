@@ -4,5 +4,6 @@ isort
 google-generativeai
 pypdf2
 pyrate-limiter
+ratelimitqueue
 requests
 tqdm
