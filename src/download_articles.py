@@ -11,7 +11,6 @@ Some of the code is adapted from:
 https://ualibweb.github.io/UALIB_ScholarlyAPI_Cookbook/src/python/wiley-tdm.html
 """
 
-import functools
 import json
 import logging
 import os
@@ -20,9 +19,9 @@ from pathlib import Path
 from typing import Any
 
 import click
-import pyrate_limiter as pyr
+import ratelimitqueue
 import requests
-from tqdm.contrib import concurrent
+from tqdm import tqdm
 
 JSON = dict[str, Any]
 # Notes:
@@ -35,10 +34,6 @@ CROSS_REF_QUERY_FAILED = "Failed to query crossref API. Status code: {response}"
 WILEY_API_URL = "https://api.wiley.com/onlinelibrary/tdm/v1/articles/{doi}"
 WILEY_DOWNLOAD_FAILED = (
     "Failed to download article: {doi}, status code: {status_code}, response: {text}"
-)
-
-limiter = pyr.Limiter(
-    pyr.Rate(1, pyr.Duration.SECOND), raise_when_fail=False, max_delay=100_000
 )
 
 log_dir = Path(os.getcwd()) / "logs"
@@ -91,13 +86,6 @@ def download_article(doi: str, out_dir: Path, api_key: str) -> bool:
     Returns:
         bool: True if the article was downloaded successfully, False otherwise.
     """
-
-    try:
-        limiter.try_acquire(doi)
-    except pyr.TooManyRequests:
-        logger.error(f"Rate limit exceeded for article: {doi}")
-        return False
-
     response = requests.get(
         WILEY_API_URL.format(doi=doi),
         headers={"Wiley-TDM-Client-Token": api_key},
@@ -172,18 +160,27 @@ def main(
         if article.get("title", None)
     ]
 
-    dois_to_download = []
+    dois_to_download = ratelimitqueue.RateLimitQueue(calls=10, per=60)
     for doi in dois:
         if not (out_dir / f"{_doi_to_filename(doi)}.pdf").exists():
-            dois_to_download.append(doi)
+            dois_to_download.put(doi)
         else:
             logger.info(f"Skipping download of article: {doi}, already exists.")
 
-    download_f = functools.partial(download_article, out_dir=out_dir, api_key=api_key)
-    # Note: The max_workers is set to 1 to avoid hitting the burst limit of the Wiley API.
-    results = concurrent.process_map(download_f, dois_to_download, max_workers=1)
+    pbar = tqdm(total=dois_to_download.qsize())
+    results = []
+    while not dois_to_download.empty():
+        doi = dois_to_download.get()
+        try:
+            results.append(download_article(doi=doi, out_dir=out_dir, api_key=api_key))
+        except Exception as e:
+            logger.error(f"Error downloading article: {doi}, {e}")
+
+        pbar.update()
+        dois_to_download.task_done()
+
     n_successful_articles = sum(results)
-    n_failed_articles = len(dois_to_download) - n_successful_articles
+    n_failed_articles = len(results) - n_successful_articles
 
     print(f"Downloaded {n_successful_articles} articles.")
     if n_failed_articles:

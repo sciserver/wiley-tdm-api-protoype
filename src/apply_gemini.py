@@ -10,15 +10,15 @@ import ratelimitqueue
 from tqdm import tqdm
 
 DEFAULT_PROMPT = (
-    "Create a table describing the datasets used in the above text with"
+    "Create a csv describing the datasets used in the above text with"
     " the following fields: dataset name, years covered, article title, all"
     " article authors (with a separate column for each author)."
 )
 
 
 def process_pdf(model: genai.types.Model, file_path: Path, prompt: str) -> str:
-    # open the pdf and pasrse pdf
-    # taken from google gemini exmaple docs
+    # open the pdf and parse pdf
+    # taken from google gemini example docs
     with open(file_path, "rb") as file:
         pdf = PyPDF2.PdfReader(file)
         doc_text = ""
@@ -71,6 +71,7 @@ def main(
         with output_loc.open("w") as f:
             f.write(generated_text)
         pbar.update()
+        article_queue.task_done()
 
 
 if __name__ == "__main__":
