@@ -1,22 +1,38 @@
 """Aggregates the outputs from the gemini model."""
 
 import csv
-import functools
+import logging
+import os
 import string
+from datetime import datetime
 from pathlib import Path
 
 import click
 from tqdm import tqdm
 
-all_letters_and_digits = set(string.ascii_letters + string.digits)
+log_dir = Path(os.getcwd()) / "logs"
+log_dir.mkdir(exist_ok=True)
+log_file = (
+    log_dir / f"aggregate_gemini_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}.log"
+)
+logging.basicConfig(
+    filename=log_file,
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+ALL_LETTERS_AND_DIGITS = set(string.ascii_letters + string.digits)
+MSG_AGGREGRATING_FILE = "Aggregating outputs from {output}"
 
 
 def process_lines(lines: list[str]) -> list[str]:
     """Process the lines from the gemini model."""
     rejection_criteria = [
-        lambda line: line.startswith("```"),  # gemini wraps a csv with ticks
-        lambda line: (set(line) ^ all_letters_and_digits)
-        == 0,  # line doesn't have any letters or digits
+        # gemini wraps a csv with ticks
+        lambda line: line.startswith("```"),
+        # line doesn't have any letters or digits
+        lambda line: (set(line) ^ ALL_LETTERS_AND_DIGITS) == 0,
     ]
 
     def rejection_f(x: str) -> bool:
@@ -24,9 +40,6 @@ def process_lines(lines: list[str]) -> list[str]:
             if criteria(x):
                 return True
         return False
-
-    for line in lines:
-        print(rejection_f(line), line)
 
     return [line.strip() for line in lines if not rejection_f(line)]
 
@@ -43,16 +56,14 @@ def main(
         writer = csv.writer(f)
         columns = ["doi"]
         for output in tqdm(outputs, desc="Aggregating outputs"):
+            logger.info(MSG_AGGREGRATING_FILE.format(output=output))
             with output.open() as f:
-                lines = process_lines(f.readlines())
-                print(lines)
-                if not lines:
-                    continue
-                if len(columns) == 1:
-                    columns += lines[0].split(",")
-                    writer.writerow(columns)
-                for line in lines[1:]:
-                    writer.writerow([output.stem] + line.split(","))
+                if lines := process_lines(f.readlines()):
+                    if len(columns) == 1:
+                        columns += lines[0].split(",")
+                        writer.writerow(columns)
+                    for line in lines[1:]:
+                        writer.writerow([output.stem] + line.split(","))
 
 
 if __name__ == "__main__":

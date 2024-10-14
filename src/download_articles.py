@@ -1,6 +1,6 @@
 """Utility to download articles from Wiley for academic purposes.
 
-The Wiley TDM API, as of 10/8/2024, enforces a rate limit of 3 reuqests per second.
+The Wiley TDM API, as of 10/8/2024, enforces a rate limit of 3 requests per second.
 With a burst of 1 request.
 
 The list of articles to download is generated via a crossref search.
@@ -35,6 +35,12 @@ WILEY_API_URL = "https://api.wiley.com/onlinelibrary/tdm/v1/articles/{doi}"
 WILEY_DOWNLOAD_FAILED = (
     "Failed to download article: {doi}, status code: {status_code}, response: {text}"
 )
+WILEY_DOWNLOAD_SUCCESS = "Successfully downloaded article: {doi}"
+WILEY_DOWNLOAD_SKIP = "Skipping download of article: {doi}, already exists."
+WILEY_DOWNLOAD_EXCEPTION = "Failed to download article: {doi}, exception: {e}"
+
+MSG_N_SUCCESSFUL = "{n_successful_articles} articles downloaded successfully."
+MSG_N_UNSUCCESSFUL = "{n_failed_articles} articles failed to download."
 
 log_dir = Path(os.getcwd()) / "logs"
 log_dir.mkdir(exist_ok=True)
@@ -95,7 +101,7 @@ def download_article(doi: str, out_dir: Path, api_key: str) -> bool:
     if response.status_code == 200:
         with open(out_dir / f"{doi.replace("/", "_")}.pdf", "wb") as f:
             f.write(response.content)
-        logger.info(f"Successfully downloaded article: {doi}")
+        logger.info(WILEY_DOWNLOAD_SUCCESS.format(doi=doi))
         return True
     else:
         logger.error(
@@ -124,6 +130,8 @@ def _set_default_end_year(ctx, _, value):
 @click.option("--end_year", type=int, default=None, callback=_set_default_end_year)
 @click.option("--api_key", type=str, envvar="WILEY_API_KEY")
 @click.option("--save_crossref_out", is_flag=True)
+@click.option("--rlq_calls", type=int, default=2)
+@click.option("--rlq_per_second", type=int, default=1)
 def main(
     out_dir: Path,
     journal_id: int,
@@ -131,7 +139,25 @@ def main(
     end_year: int,
     api_key: str,
     save_crossref_out: bool,
+    rlq_calls: int,
+    rlq_per_second: int,
 ) -> None:
+    """Download articles from Wiley for academic purposes.
+
+    Args:
+        out_dir (Path): The directory to save the articles to.
+        journal_id (int): The journal ID to query.
+        start_year (int): The start year of the articles to query.
+        end_year (int): The end year of the articles to query.
+        api_key (str): The API key for the Wiley TDM API.
+        save_crossref_out (bool): Whether to save the crossref output to a file.
+        rlq_calls (int): The number of calls to make per second.
+        rlq_per_second (int): The number of seconds to make calls for.
+
+    Returns:
+        None
+    """
+
     out_dir.mkdir(exist_ok=True)
 
     articles = query_crossref(journal_id, start_year, end_year)
@@ -160,12 +186,14 @@ def main(
         if article.get("title", None)
     ]
 
-    dois_to_download = ratelimitqueue.RateLimitQueue(calls=10, per=60)
+    dois_to_download = ratelimitqueue.RateLimitQueue(
+        calls=rlq_calls, per=rlq_per_second
+    )
     for doi in dois:
         if not (out_dir / f"{_doi_to_filename(doi)}.pdf").exists():
             dois_to_download.put(doi)
         else:
-            logger.info(f"Skipping download of article: {doi}, already exists.")
+            logger.info(WILEY_DOWNLOAD_SKIP.format(doi=doi))
 
     pbar = tqdm(total=dois_to_download.qsize())
     results = []
@@ -174,7 +202,7 @@ def main(
         try:
             results.append(download_article(doi=doi, out_dir=out_dir, api_key=api_key))
         except Exception as e:
-            logger.error(f"Error downloading article: {doi}, {e}")
+            logger.error(WILEY_DOWNLOAD_EXCEPTION.format(doi=doi, e=e))
 
         pbar.update()
         dois_to_download.task_done()
@@ -182,11 +210,9 @@ def main(
     n_successful_articles = sum(results)
     n_failed_articles = len(results) - n_successful_articles
 
-    print(f"Downloaded {n_successful_articles} articles.")
+    print(MSG_N_SUCCESSFUL.format(n_successful_articles=n_successful_articles))
     if n_failed_articles:
-        print(
-            f"{n_failed_articles} articles failed to download. Check the log file for more information."
-        )
+        print(MSG_N_UNSUCCESSFUL.format(n_failed_articles=n_failed_articles))
 
 
 if __name__ == "__main__":
